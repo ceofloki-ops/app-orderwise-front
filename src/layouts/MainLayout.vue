@@ -150,24 +150,17 @@
             <q-tooltip>Escanear QR</q-tooltip>
           </q-btn>
 
-          <!-- Soporte Chat -->
+          <!-- AI Assistant -->
           <q-btn
             v-if="userSession"
             flat
             dense
             round
-            icon="chat"
+            icon="auto_awesome"
             @click="handleChatButtonClick"
             class="support-chat-toggle-btn"
           >
-            <q-badge
-              v-if="totalSupportUnread > 0"
-              color="red"
-              floating
-            >
-              {{ totalSupportUnread }}
-            </q-badge>
-            <q-tooltip>Chat de Soporte</q-tooltip>
+            <q-tooltip>Asistente IA</q-tooltip>
           </q-btn>
 
           <!-- Herramientas -->
@@ -449,6 +442,26 @@
                       </q-item-section>
                     </q-item>
 
+                    <!-- Ayuda y Soporte Técnico -->
+                    <q-item
+                      v-ripple
+                      clickable
+                      dense
+                      class="profile-action-item-compact"
+                      @click="$router.push({ name: 'HelpCenter' })"
+                      v-close-popup
+                    >
+                      <q-item-section avatar class="min-width-auto">
+                        <div class="action-icon-wrapper">
+                          <q-icon name="help_outline" color="primary" size="20px" />
+                        </div>
+                      </q-item-section>
+                      <q-item-section>
+                        <q-item-label class="text-body2 text-weight-medium">Ayuda y Soporte Técnico</q-item-label>
+                        <q-item-label caption class="text-caption action-caption">Guías, tutoriales y soporte</q-item-label>
+                      </q-item-section>
+                    </q-item>
+
                     <!-- Subscription Plans (Solo para root o super_admin) -->
                     <q-item
                       v-if="isRootOrSuperAdmin()"
@@ -693,10 +706,9 @@
       @back="showOtpVerification = false; showCreateCompanyDialog = true"
     />
 
-    <!-- Global Support Chat Bubble -->
-    <SupportChatBubble
-      v-if="$route.name !== 'Support' && $route.name !== 'AdminSupport'"
-      ref="supportChat"
+    <!-- Global AI Assistant Bubble -->
+    <AiAssistantBubble
+      ref="aiAssistant"
     />
 
     <SupportNotificationToast
@@ -742,12 +754,21 @@
       </div>
     </transition>
 
+    <!-- PedidosYa Order Popup -->
+    <PedidosYaOrderPopup
+      v-model:show="showPeyaPopup"
+      :order="peyaOrder"
+      :loading="peyaLoading"
+      @accept="acceptPeyaOrder"
+      @reject="rejectPeyaOrder"
+    />
   </q-layout>
 </template>
 
 <script>
 import { api, apiArca } from 'src/boot/axios'
 import NotificationComponent from 'src/components/NotificationComponent.vue'
+import PedidosYaOrderPopup from 'src/components/PedidosYaOrderPopup.vue'
 import FloatingThemeSelector from 'src/components/ThemeSelector/FloatingThemeSelector.vue'
 import SubscriptionPlansDialog from 'src/components/SubscriptionPlansDialog.vue'
 import SubscriptionExpirationBanner from 'src/components/SubscriptionExpirationBanner.vue'
@@ -763,7 +784,7 @@ import { mapState, mapActions } from 'pinia'
 import { logo, notify, loading } from 'src/const/mixins'
 import eventBus from 'src/utils/eventBus'
 import { darkModeStore } from '../stores/darkModeStore'
-import { MultiDisplayManager } from 'multi-display-manager'
+// import { MultiDisplayManager } from 'multi-display-manager' // NOT BUILT
 import { copyToClipboard } from 'quasar'
 import { useRouter } from 'vue-router'
 import BottomNav from 'src/components/Navigation/BottomNav.vue'
@@ -779,13 +800,14 @@ import {
 import { useDemoPersuasion } from 'src/composables/useDemoPersuasion'
 import { useCompanySetup } from 'src/composables/useCompanySetup'
 import ProPlanPromoBanner from 'src/components/ProPlanPromoBanner.vue'
-import SupportChatBubble from 'src/components/SupportChatBubble.vue'
+import AiAssistantBubble from 'src/components/HelpCenter/AiAssistantBubble.vue'
 import SupportNotificationToast from 'src/components/SupportNotificationToast.vue'
 
 export default {
   name: 'MainLayout',
   components: {
     NotificationComponent,
+    PedidosYaOrderPopup,
     FloatingThemeSelector,
     SubscriptionPlansDialog,
     SubscriptionExpirationBanner,
@@ -798,7 +820,7 @@ export default {
     IntegrationDynamic,
     BottomNav,
     ProPlanPromoBanner,
-    SupportChatBubble,
+    AiAssistantBubble,
     SupportNotificationToast
   },
   data () {
@@ -816,6 +838,12 @@ export default {
       selectedIntegrationSlug: null,
       numberOfNotifications: [],
       notifications: [],
+      // PedidosYa
+      peyaOrder: null,
+      showPeyaPopup: false,
+      peyaLoading: false,
+      peyaPollInterval: null,
+      lastPeyaCheck: null,
       labelDrown: null,
       dataMenu: [],
       active: true,
@@ -1207,17 +1235,19 @@ export default {
   },
 
   mounted () {
-    this.$echo
-      .private('App.Models.User.' + this.userSession.id)
-      .notification((notification) => {
-        this.setNotification(notification)
-      })
-
-    if (this.userSession?.id) {
-      this.$echo.private(`support.user.${this.userSession.id}`)
-        .listen('.message.sent', (data) => {
-          this.handleGlobalSupportMessage(data)
+    if (this.$echo) {
+      this.$echo
+        .private('App.Models.User.' + this.userSession.id)
+        .notification((notification) => {
+          this.setNotification(notification)
         })
+
+      if (this.userSession?.id) {
+        this.$echo.private(`support.user.${this.userSession.id}`)
+          .listen('.message.sent', (data) => {
+            this.handleGlobalSupportMessage(data)
+          })
+      }
     }
 
     // Listen for subscription updates
@@ -1278,6 +1308,7 @@ export default {
   beforeUnmount () {
     this.stopDemoReminder()
     this.stopDemoPersuasion()
+    this.stopPeyaPolling()
     document.removeEventListener('click', this.handleGlobalClick)
   },
   unmounted () {
@@ -1290,6 +1321,7 @@ export default {
     this.loadingPage()
     this.checkMultipleScreens()
     this.loadSubscriptionInfo()
+    this.startPeyaPolling()
   },
   methods: {
     /**
@@ -1898,10 +1930,9 @@ export default {
     async screen () {
       try {
         loading(true)
-        const url = `${import.meta.env.VITE_APP_URL}/verifying/${encodeURIComponent(this.token_type)}/${encodeURIComponent(this.access_token)}/${this.expires_In}/InvoiceDetails`
-        await MultiDisplayManager.showOnSecondScreen({
-          url
-        })
+        // MultiDisplayManager disabled for local dev
+        // const url = `${import.meta.env.VITE_APP_URL}/verifying/...`
+        // await MultiDisplayManager.showOnSecondScreen({ url })
       } catch (error) {
         alert(error.message)
       } finally {
@@ -1909,13 +1940,9 @@ export default {
       }
     },
     async closeScreen () {
-      // Obtener estado
-      const status = await MultiDisplayManager.getSecondScreenStatus()
-      alert(status.message, status.isShowing)
-      if (status.isShowing) {
-        // Cerrar pantalla
-        await MultiDisplayManager.closeSecondScreen()
-      }
+      // MultiDisplayManager disabled for local dev
+      // const status = await MultiDisplayManager.getSecondScreenStatus()
+      // if (status.isShowing) { await MultiDisplayManager.closeSecondScreen() }
     },
     ucwords (data) {
       return data
@@ -2458,8 +2485,8 @@ export default {
     testToast () {
       this.toastData = {
         avatar: 'https://cdn.quasar.dev/img/avatar2.jpg',
-        name: 'Palma (Soporte)',
-        message: '¡Hola! ¿En qué puedo ayudarte hoy con tu pedido?'
+        name: 'Asistente QBITS',
+        message: '¡Hola! ¿En qué puedo ayudarte hoy?'
       }
       this.$nextTick(() => {
         this.$refs.supportToast?.show()
@@ -2469,20 +2496,7 @@ export default {
      * Handle chat button click based on screen size
      */
     handleChatButtonClick () {
-      if (this.$q.screen.xs) {
-        this.$router.push('/support')
-      } else {
-        this.$refs.supportChat?.toggleMiniChat()
-      }
-    },
-    /**
-     * Handle support click from the Facebook card in the drawer
-     */
-    handleSupportClick () {
-      console.log('Support card clicked', this.$refs.supportChat)
-      if (this.$refs.supportChat) {
-        this.$refs.supportChat.toggleMiniChat()
-      }
+      this.$refs.aiAssistant?.toggle()
     },
     /**
      * Logout map actions
@@ -2491,7 +2505,72 @@ export default {
     /**
      * Dark mode map actions
      */
-    ...mapActions(darkModeStore, ['setDarkMode'])
+    ...mapActions(darkModeStore, ['setDarkMode']),
+
+    // ── PedidosYa Order Polling ──────────────────────────────────────
+    startPeyaPolling () {
+      this.checkPeyaOrders()
+      this.peyaPollInterval = setInterval(() => this.checkPeyaOrders(), 20000) // Every 20s
+    },
+    stopPeyaPolling () {
+      if (this.peyaPollInterval) {
+        clearInterval(this.peyaPollInterval)
+        this.peyaPollInterval = null
+      }
+    },
+    async checkPeyaOrders () {
+      try {
+        const { data } = await api.get('notifications', { params: { unread: true } })
+        const notifications = data.data || data || []
+        const peyaNotif = notifications.find(n =>
+          n.data?.type === 'pedidosya_order' && !n.read_at
+        )
+        if (peyaNotif && (!this.lastPeyaCheck || peyaNotif.id !== this.lastPeyaCheck)) {
+          this.lastPeyaCheck = peyaNotif.id
+          this.peyaOrder = peyaNotif.data
+          this.showPeyaPopup = true
+          // Also refresh notification badge
+          this.getDataNotification()
+        }
+      } catch (e) {
+        // Silent fail
+      }
+    },
+    async acceptPeyaOrder (order) {
+      this.peyaLoading = true
+      try {
+        await api.post(`peya/orders/${order.invoice_id}/accept`)
+        this.showPeyaPopup = false
+        this.peyaOrder = null
+        this.$q.notify({ message: '✅ Pedido PedidosYa aceptado', color: 'positive', icon: 'check_circle' })
+        // Mark notification as read
+        if (this.lastPeyaCheck) {
+          api.put(`notifications/${this.lastPeyaCheck}`).catch(() => {})
+        }
+        this.getDataNotification()
+      } catch (e) {
+        this.$q.notify({ message: 'Error al aceptar pedido', color: 'negative', icon: 'warning' })
+      } finally {
+        this.peyaLoading = false
+      }
+    },
+    async rejectPeyaOrder (order) {
+      this.peyaLoading = true
+      try {
+        await api.post(`peya/orders/${order.invoice_id}/reject`)
+        this.showPeyaPopup = false
+        this.peyaOrder = null
+        this.$q.notify({ message: 'Pedido rechazado', color: 'warning', icon: 'cancel' })
+        if (this.lastPeyaCheck) {
+          api.put(`notifications/${this.lastPeyaCheck}`).catch(() => {})
+        }
+        this.getDataNotification()
+      } catch (e) {
+        this.$q.notify({ message: 'Error al rechazar pedido', color: 'negative', icon: 'warning' })
+      } finally {
+        this.peyaLoading = false
+      }
+    }
   }
 }
 </script>

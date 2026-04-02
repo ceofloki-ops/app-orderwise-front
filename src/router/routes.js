@@ -172,6 +172,12 @@ const routes = [
         component: () => import('pages/CompanyConfigPage.vue')
       },
       {
+        path: 'fiscal',
+        name: 'FiscalConfig',
+        meta: { requiresAuth: true },
+        component: () => import('pages/FiscalConfigPage.vue')
+      },
+      {
         path: 'delivery-persons',
         name: 'DeliveryPerson',
         meta: { requiresAuth: true },
@@ -448,6 +454,25 @@ const routes = [
         name: 'AdminSupport',
         meta: { requiresAuth: true, hideBottomNav: true },
         component: () => import('pages/SupportChatPage.vue')
+      },
+      // Help Center Routes
+      {
+        path: 'help',
+        name: 'HelpCenter',
+        meta: { requiresAuth: true, title: 'Ayuda y Soporte' },
+        component: () => import('pages/HelpCenterPage.vue')
+      },
+      {
+        path: 'help/:category',
+        name: 'HelpCategory',
+        meta: { requiresAuth: true, title: 'Centro de Ayuda' },
+        component: () => import('pages/HelpCategoryPage.vue')
+      },
+      {
+        path: 'help/:category/:article',
+        name: 'HelpArticle',
+        meta: { requiresAuth: true, title: 'Artículo de Ayuda' },
+        component: () => import('pages/HelpArticlePage.vue')
       }
     ]
   },
